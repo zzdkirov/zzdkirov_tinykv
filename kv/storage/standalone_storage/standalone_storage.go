@@ -11,7 +11,7 @@ import (
 type StandAloneStorage struct {
 	// Your Data Here (1).
 }
-
+//new Stand Alone Storage database, but It's hard to understand
 func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
 	// Your Code Here (1).
 	return nil
