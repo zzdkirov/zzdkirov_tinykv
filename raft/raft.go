@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -163,7 +162,31 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	return nil
+
+	//> - When start a new raft, get the last stabled state from `Storage` to initialize `raft.Raft` and `raft.RaftLog`
+	logprogress:= make(map[uint64]*Progress)
+
+	raft := &Raft{}
+
+	//actually return pasti(zero)
+	pasti:=raft.RaftLog.LastIndex()
+
+	for _,i:= range c.peers{
+		logprogress[i]= &Progress{Match: pasti,Next: pasti+1}
+	}
+
+	paststate,_,_:= raft.RaftLog.storage.InitialState()
+	raft.id=c.ID
+	raft.Prs=logprogress
+	raft.Vote=paststate.Vote
+	raft.Term=paststate.Term
+	raft.State=StateFollower
+	raft.heartbeatTimeout=c.HeartbeatTick
+	raft.electionTimeout=c.ElectionTick
+	raft.RaftLog=newLog(c.Storage)
+	raft.msgs=make([]pb.Message,0)
+
+	return raft
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the
@@ -176,11 +199,13 @@ func (r *Raft) sendAppend(to uint64) bool {
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	return
 }
 
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
+	//point everykinds of node
 }
 
 // becomeFollower transform this peer's state to Follower
