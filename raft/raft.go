@@ -17,6 +17,7 @@ package raft
 import (
 	"errors"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"math/rand"
 )
 
 // None is a placeholder node ID used when there is no leader.
@@ -134,6 +135,9 @@ type Raft struct {
 	heartbeatTimeout int
 	// baseline of election interval
 	electionTimeout int
+	//random time out points: avoiding tickets evenly partition
+	//range:[electiontimeout,2*electiontimeout]
+	randomelectionTimeout int
 	// number of ticks since it reached last heartbeatTimeout.
 	// only leader keeps heartbeatElapsed.
 	heartbeatElapsed int
@@ -168,11 +172,18 @@ func newRaft(c *Config) *Raft {
 
 	raft := &Raft{}
 
-	//actually return pasti(zero)
+	//actually return pasti
 	pasti:=raft.RaftLog.LastIndex()
 
+	//match always initialize with its last matchlogindex(if not avaliable zero)
+	//next initialize with leader's match+1
 	for _,i:= range c.peers{
-		logprogress[i]= &Progress{Match: pasti,Next: pasti+1}
+		if(i==raft.id){
+			logprogress[i]= &Progress{Match: pasti,Next: pasti+1}
+		} else{
+			logprogress[i]= &Progress{Match: 0,Next: pasti+1}
+		}
+
 	}
 
 	paststate,_,_:= raft.RaftLog.storage.InitialState()
@@ -185,6 +196,7 @@ func newRaft(c *Config) *Raft {
 	raft.electionTimeout=c.ElectionTick
 	raft.RaftLog=newLog(c.Storage)
 	raft.msgs=make([]pb.Message,0)
+	raft.randomelectionTimeout=c.ElectionTick + rand.Intn(c.ElectionTick)
 
 	return raft
 }
@@ -193,12 +205,29 @@ func newRaft(c *Config) *Raft {
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
-	return false
+
+	//send
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgAppend,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+	}
+	r.msgs = append(r.msgs, msg)
+	return true
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeat,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+	}
+	r.msgs = append(r.msgs, msg)
+
 	return
 }
 
@@ -206,22 +235,112 @@ func (r *Raft) sendHeartbeat(to uint64) {
 func (r *Raft) tick() {
 	// Your Code Here (2A).
 	//point everykinds of node
+	if r.State==StateLeader {
+		r.heartbeatElapsed++
+		if r.heartbeatElapsed>=r.heartbeatTimeout{
+			//timeout send local msg(msghup) and new a election
+			r.heartbeatElapsed=0
+			r.Step(pb.Message{
+				MsgType: pb.MessageType_MsgHup,
+				From: r.id,
+				Term: r.Term,
+			})
+		}
+	}else { //point follower and candidate
+		r.electionElapsed++
+		if r.electionElapsed >= r.randomelectionTimeout {
+			r.electionElapsed = 0
+			r.Step(pb.Message{
+				MsgType: pb.MessageType_MsgHup,
+				From:    r.id,
+				Term:    r.Term,
+			})
+		}
+	}
+
 }
 
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	// Your Code Here (2A).
+	r.electionElapsed=0
+	r.heartbeatElapsed=0
+	r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
+	r.votes=make(map[uint64]bool,0)
+
+	if(r.Term!=term){
+		r.Term=term
+		r.Vote=0
+	}
+	r.State=StateFollower
+	r.Lead=lead
+
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	r.electionElapsed=0
+	r.heartbeatElapsed=0
+	r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
+	r.votes=make(map[uint64]bool,0)
+
+	r.Term++
+	//vote itself
+	r.Vote=r.id
+	r.votes[r.id]=true
+
+
+	r.State=StateCandidate
+
+	//if now peer's num <=1 (only this candicate) then become leader
+	if len(r.Prs)<=1{
+		r.becomeLeader()
+	}
 }
 
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	if r.State!=StateLeader{
+		r.electionElapsed=0
+		r.heartbeatElapsed=0
+		r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
+		r.votes=make(map[uint64]bool,0)
+
+		r.Lead=r.id
+		lastindex:=r.RaftLog.LastIndex()
+
+		//propose a nop entry
+		entry:=pb.Entry{
+			Index: lastindex+1,
+			Term: r.Term,
+			EntryType: pb.EntryType_EntryNormal,
+			Data: nil,
+		}
+
+		r.RaftLog.entries=append(r.RaftLog.entries,entry)
+
+		//update nextindex yi match index
+		for i:=range r.Prs{
+			if i==r.id{
+				r.Prs[i]=&Progress{
+					Match: lastindex,
+					Next: lastindex+1,
+				}
+			}else{
+				r.Prs[i]=&Progress{
+					Match: 0,
+					Next: lastindex+1,
+				}
+			}
+		}
+		
+
+
+	}
+
 }
 
 // Step the entrance of handle message, see `MessageType`
