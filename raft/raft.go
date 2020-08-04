@@ -172,25 +172,20 @@ func newRaft(c *Config) *Raft {
 
 	raft := &Raft{}
 
-	//actually return pasti
-	pasti:=raft.RaftLog.LastIndex()
+
 
 	//match always initialize with its last matchlogindex(if not avaliable zero)
 	//next initialize with leader's match+1
 	for _,i:= range c.peers{
-		if(i==raft.id){
-			logprogress[i]= &Progress{Match: pasti,Next: pasti+1}
-		} else{
-			logprogress[i]= &Progress{Match: 0,Next: pasti+1}
+		logprogress[i]=&Progress{}
 		}
 
-	}
 
-	paststate,_,_:= raft.RaftLog.storage.InitialState()
+
 	raft.id=c.ID
+	raft.Lead=0
 	raft.Prs=logprogress
-	raft.Vote=paststate.Vote
-	raft.Term=paststate.Term
+	raft.votes=make(map[uint64]bool)
 	raft.State=StateFollower
 	raft.heartbeatTimeout=c.HeartbeatTick
 	raft.electionTimeout=c.ElectionTick
@@ -208,7 +203,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 
 	//send
 	msg := pb.Message{
-		MsgType: pb.MessageType_MsgAppend,
+		MsgType: pb.MessageType_MsgPropose,
 		From:    r.id,
 		To:      to,
 		Term:    r.Term,
@@ -231,22 +226,54 @@ func (r *Raft) sendHeartbeat(to uint64) {
 	return
 }
 
+func (r *Raft)sendRequestVote(to uint64){
+	//My Code Here (2A)
+	lastindex:=r.RaftLog.LastIndex()
+	lastterm:=r.RaftLog.LastTerm()
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgRequestVote,
+		From:    r.id,
+		To:      to,
+		Term:	r.Term,
+		LogTerm:    lastterm,
+		Index: lastindex,
+
+	}
+	r.msgs = append(r.msgs, msg)
+
+	return
+}
+
+func (r *Raft) sendRequestVoteResponse(to uint64, reject bool) {
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgRequestVoteResponse,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+		Reject:  reject,
+	}
+	r.msgs = append(r.msgs, msg)
+	return
+}
+
+
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
 	//point everykinds of node
+	//main aim at timeout handle
 	if r.State==StateLeader {
 		r.heartbeatElapsed++
 		if r.heartbeatElapsed>=r.heartbeatTimeout{
 			//timeout send local msg(msghup) and new a election
 			r.heartbeatElapsed=0
 			r.Step(pb.Message{
-				MsgType: pb.MessageType_MsgHup,
-				From: r.id,
+				MsgType: pb.MessageType_MsgBeat,
+				To: r.id,
 				Term: r.Term,
 			})
 		}
-	}else { //point follower and candidate
+	}else if(r.State==StateCandidate||r.State==StateFollower){ //point follower and candidate
 		r.electionElapsed++
 		if r.electionElapsed >= r.randomelectionTimeout {
 			r.electionElapsed = 0
@@ -267,13 +294,13 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.heartbeatElapsed=0
 	r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
 	r.votes=make(map[uint64]bool,0)
+	r.Lead=0
 
-	if(r.Term!=term){
+	r.State=StateFollower
+	if r.Term!=term {
 		r.Term=term
 		r.Vote=0
 	}
-	r.State=StateFollower
-	r.Lead=lead
 
 }
 
@@ -284,14 +311,13 @@ func (r *Raft) becomeCandidate() {
 	r.heartbeatElapsed=0
 	r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
 	r.votes=make(map[uint64]bool,0)
+	r.Lead=0
 
 	r.Term++
+	r.State=StateCandidate
 	//vote itself
 	r.Vote=r.id
 	r.votes[r.id]=true
-
-
-	r.State=StateCandidate
 
 	//if now peer's num <=1 (only this candicate) then become leader
 	if len(r.Prs)<=1{
@@ -308,8 +334,10 @@ func (r *Raft) becomeLeader() {
 		r.heartbeatElapsed=0
 		r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
 		r.votes=make(map[uint64]bool,0)
-
+		r.State=StateLeader
 		r.Lead=r.id
+
+
 		lastindex:=r.RaftLog.LastIndex()
 
 		//propose a nop entry
@@ -336,8 +364,12 @@ func (r *Raft) becomeLeader() {
 				}
 			}
 		}
-		
-
+		//Boardcast msgs to other Followers
+		for j:=1;j<=len(r.Prs);j++{
+			if uint64(j)!=r.id {
+				r.sendAppend(uint64(j))
+			}
+		}
 
 	}
 
@@ -347,10 +379,108 @@ func (r *Raft) becomeLeader() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+	switch{
+	case m.Term==0:
+		//local msg, no actio
+	case m.Term>r.Term:
+		//node id==m recv a msg whose term is greater than its
+		r.becomeFollower(m.Term,m.From)
+	case m.Term<r.Term:
+		//node id==m recv a msg whose term is less than its, ignore
+		return nil
+	}
+
+	//any kinds of node should votes(in response for msgrequestvotes)
+	if m.MsgType==pb.MessageType_MsgRequestVote{
+		//most important: vote for whom
+		//1.now vote is none and now leaderis none (tick)
+		//2.now vote == msg's node (tick)
+		//3.now term < msg's log term
+		//4.now log index <= msg's log index when terms are euqal
+		votecond1:=r.Vote==0 && r.Lead==0
+		votecond2:=r.Vote==m.From
+		updatecond3:=r.RaftLog.LastTerm()<m.LogTerm
+		updatecond4:=r.RaftLog.LastTerm()==m.LogTerm && r.RaftLog.LastIndex()<=m.Index
+		vote:=(votecond1 || votecond2) && (updatecond3 ||updatecond4)
+		if(vote){
+			r.Vote=m.From
+		}
+		r.sendRequestVoteResponse(m.From,!vote)
+		return nil
+	}
+
 	switch r.State {
 	case StateFollower:
+		switch m.MsgType{
+		case pb.MessageType_MsgHup:
+			//timeout, become candicate and boardcast voterequest
+			r.becomeCandidate()
+			for i:=range r.Prs{
+				if i!=r.id{
+					r.sendRequestVote(i)
+				}
+			}
+		case pb.MessageType_MsgHeartbeat:
+			r.becomeFollower(m.Term, m.From)
+		case pb.MessageType_MsgAppend:
+			r.becomeFollower(m.Term, m.From)
+			//r.handleAppendEntries(m)
+		}
 	case StateCandidate:
+		switch m.MsgType{
+		case pb.MessageType_MsgHup:
+			//timeout, become candicate and boardcast voterequest
+			r.becomeCandidate()
+			for i:=range r.Prs{
+				if i!=r.id{
+					r.sendRequestVote(i)
+				}
+			}
+		case pb.MessageType_MsgHeartbeat:
+			r.becomeFollower(m.Term, m.From)
+		case pb.MessageType_MsgAppend:
+			r.becomeFollower(m.Term, m.From)
+		case pb.MessageType_MsgRequestVoteResponse:
+			//in response for its vote request and handling the vote result
+			r.votes[m.From]=!m.Reject
+			//for every node count their attitude
+			yes:=0
+			no:=0
+			for i,_:=range r.votes{
+				if r.votes[i]==true {
+					yes++
+				}else{
+					no++
+				}
+			}
+
+			//if Raft only has one node or yes votes more than node's num/2, then be leader
+			if(len(r.Prs)==1||yes>len(r.Prs)/2){
+				r.becomeLeader()
+				for j:=range r.Prs{
+					if(j!=r.id){
+						r.sendHeartbeat(j)
+					}
+				}
+			}else if(no>len(r.Prs)/2){
+				r.becomeFollower(r.Term,0)
+			}
+		}
 	case StateLeader:
+		switch m.MsgType {
+		case pb.MessageType_MsgBeat:
+			for i := range r.Prs {
+				if i != r.id {
+					r.sendHeartbeat(i)
+				}
+			}
+		case pb.MessageType_MsgPropose:
+			for j:=range r.Prs{
+				if j != r.id {
+					r.sendAppend(uint64(j))
+				}
+			}
+		}
 	}
 	return nil
 }
