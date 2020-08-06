@@ -45,20 +45,29 @@ type RaftLog struct {
 	// all entries that have not yet compact.
 	entries []pb.Entry
 
+
+
 	// the incoming unstable snapshot, if any.
 	// (Used in 2C)
 	pendingSnapshot *pb.Snapshot
 
 	// Your Data Here (2A).
+	//pre entries index
+	preindex uint64
 }
 
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
+	prei,_:=storage.FirstIndex()
+	stab,_:=storage.LastIndex()
+	ent,_:=storage.Entries(prei,stab+1)
 	return &RaftLog{
 		storage: storage,
-		entries: make([]pb.Entry,0),
+		entries: ent,
+		preindex: prei,
+		stabled: stab,
 	}
 }
 
@@ -84,6 +93,11 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
+	/*entrieslth:=len(l.entries)
+	if entrieslth>0 {
+		return l.preindex+uint64(entrieslth)-1
+	}
+*/
 	lastindex,_:=l.storage.LastIndex()
 	return lastindex
 }
@@ -91,10 +105,78 @@ func (l *RaftLog) LastIndex() uint64 {
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
+	if i>l.LastIndex(){
+		return 0,nil
+	}
+	if len(l.entries)>0 && i>=l.preindex{
+		return l.entries[i-l.preindex].Term,nil
+	}
 	return l.storage.Term(i)
 }
 
 func (l *RaftLog) LastTerm() uint64{
 	lastterm,_:=l.Term(l.LastIndex())
 	return lastterm
+}
+
+
+func (l *RaftLog) GetLastEntries(from uint64,to uint64) []pb.Entry{
+	lastindex:=l.LastIndex()
+
+	if(from==lastindex){
+		return nil
+	}
+	var sents []pb.Entry
+	if len(l.entries)>0{
+		if from<l.preindex{
+			storageentries,_:=l.storage.Entries(from,min(to,l.preindex))
+			sents=storageentries
+		}
+
+		if to>l.preindex{
+			memoryentries:=l.entries[max(from,l.preindex)-l.preindex : to-l.preindex]
+			if len(sents)>0{
+				res:=make([]pb.Entry,len(sents)+len(memoryentries))
+				n:=copy(res,sents)
+				copy(res[n:],memoryentries)
+				return res
+			}else{
+				res := make([]pb.Entry, len(memoryentries))
+				copy(res, memoryentries)
+				return res
+			}
+		}
+	}else{
+		storageentries,_:=l.storage.Entries(from,to)
+		return storageentries
+	}
+	return nil
+}
+
+func (l *RaftLog) appendEntries(entries ...pb.Entry){
+	if len(entries)==0{
+		return
+	}
+	lastindex:=entries[0].Index-1
+	if len(l.entries)>0 {
+		if lastindex==l.preindex+uint64(len(l.entries)-1){
+			//if append entries equals last logindex add now entries lth means normal situation and append
+			l.entries=append(l.entries,entries...)
+		}else if lastindex< l.preindex{
+			//get new entries
+			l.preindex=lastindex+1
+			l.entries=entries
+		}else{
+			//update new entries instead of previous
+			l.entries=append([]pb.Entry{},l.entries[:lastindex+1-l.preindex]...)
+			l.entries=append(l.entries,entries...)
+		}
+	}else{
+		//now log lth==0, assign
+		l.preindex=lastindex+1
+		l.entries=entries
+	}
+	if l.stabled>lastindex{
+		l.stabled=lastindex
+	}
 }
