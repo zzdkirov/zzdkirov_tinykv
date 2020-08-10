@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"github.com/gogo/protobuf/sortkeys"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"math/rand"
 )
@@ -186,6 +187,13 @@ func newRaft(c *Config) *Raft {
 
 	lasti:=raft.RaftLog.LastIndex()
 
+	initialstate,_,_:=raft.RaftLog.storage.InitialState()
+
+	/*forget to initial vote so test LeaderElectionOverwriteNewerlogs failed*/
+	raft.Vote=initialstate.Vote
+	raft.Term=initialstate.Term
+	raft.RaftLog.committed=initialstate.Commit
+
 	//match always initialize with its last matchlogindex(if not avaliable zero)
 	//initialize every node's log progress and for others zero
 	for i:=1;i<=len(c.peers);i++{
@@ -246,11 +254,13 @@ func (r *Raft) sendAppend(to uint64) bool {
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	commit:=min(r.RaftLog.committed,r.Prs[to].Match)
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgHeartbeat,
 		From:    r.id,
 		To:      to,
 		Term:    r.Term,
+		Commit: commit,
 	}
 	r.msgs = append(r.msgs, msg)
 
@@ -327,11 +337,13 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.votes=make(map[uint64]bool,0)
 	r.Lead=0
 
-	r.State=StateFollower
+
 	if r.Term!=term {
 		r.Term=term
 		r.Vote=0
 	}
+	r.State=StateFollower
+	r.Lead=lead
 
 }
 
@@ -343,6 +355,7 @@ func (r *Raft) becomeCandidate() {
 	r.randomelectionTimeout=r.electionTimeout + rand.Intn(r.electionTimeout)
 	r.votes=make(map[uint64]bool,0)
 	r.Lead=0
+
 
 	r.Term++
 	r.State=StateCandidate
@@ -369,19 +382,8 @@ func (r *Raft) becomeLeader() {
 		r.Lead=r.id
 
 
-		lastindex:=r.RaftLog.LastIndex()
-
-		//propose a nop entry
-		entry:=pb.Entry{
-			Index: lastindex+1,
-			Term: r.Term,
-			EntryType: pb.EntryType_EntryNormal,
-			Data: nil,
-		}
-
-		r.RaftLog.entries=append(r.RaftLog.entries,entry)
-
 		//update nextindex yi match index
+		lastindex:=r.RaftLog.LastIndex()
 		for i:=range r.Prs{
 			if i==r.id{
 				r.Prs[i]=&Progress{
@@ -395,12 +397,31 @@ func (r *Raft) becomeLeader() {
 				}
 			}
 		}
-		//Boardcast msgs to other Followers
-		for j:=1;j<=len(r.Prs);j++{
-			if uint64(j)!=r.id {
-				r.sendAppend(uint64(j))
+
+
+
+		//propose a nop entry
+		entry:=pb.Entry{
+			Index: lastindex+1,
+			Term: r.Term,
+			EntryType: pb.EntryType_EntryNormal,
+			Data: nil,
+		}
+
+		r.RaftLog.entries=append(r.RaftLog.entries,entry)
+		r.Prs[r.id].Match=r.RaftLog.LastIndex()
+		r.Prs[r.id].Next= r.Prs[r.id].Match+1
+		if(len(r.Prs)==1){
+			r.UpdateCommit()
+		} else{
+			//Boardcast msgs to other Followers
+			for j:=1;j<=len(r.Prs);j++{
+				if uint64(j)!=r.id {
+					r.sendAppend(uint64(j))
+				}
 			}
 		}
+
 
 	}
 
@@ -412,12 +433,11 @@ func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
 	switch{
 	case m.Term==0:
-		//local msg, no actio
+		//local msg, no action
 	case m.Term>r.Term:
 		//node id==m recv a msg whose term is greater than its
 		if m.MsgType == pb.MessageType_MsgAppend ||
-		 m.MsgType == pb.MessageType_MsgHeartbeat ||
-		 m.MsgType == pb.MessageType_MsgSnapshot {
+		 m.MsgType == pb.MessageType_MsgHeartbeat {
 			r.becomeFollower(m.Term, m.From)
 		} else {
 			r.becomeFollower(m.Term, None)
@@ -473,6 +493,9 @@ func (r *Raft) Step(m pb.Message) error {
 			}
 		case pb.MessageType_MsgHeartbeat:
 			r.becomeFollower(m.Term, m.From)
+			if m.Commit > r.RaftLog.committed {
+				r.RaftLog.committed = m.Commit
+			}
 		case pb.MessageType_MsgAppend:
 			r.becomeFollower(m.Term, m.From)
 			r.handleAppendEntries(m)
@@ -489,6 +512,9 @@ func (r *Raft) Step(m pb.Message) error {
 			}
 		case pb.MessageType_MsgHeartbeat:
 			r.becomeFollower(m.Term, m.From)
+			if m.Commit > r.RaftLog.committed {
+				r.RaftLog.committed = m.Commit
+			}
 		case pb.MessageType_MsgAppend:
 			r.becomeFollower(m.Term, m.From)
 			r.handleAppendEntries(m)
@@ -523,9 +549,9 @@ func (r *Raft) Step(m pb.Message) error {
 	case StateLeader:
 		switch m.MsgType {
 		case pb.MessageType_MsgBeat:
-			for i := range r.Prs {
-				if i != r.id {
-					r.sendHeartbeat(i)
+			for i :=1;i<=len(r.Prs);i++ {
+				if uint64(i) != r.id {
+					r.sendHeartbeat(uint64(i))
 				}
 			}
 		case pb.MessageType_MsgPropose:
@@ -540,12 +566,40 @@ func (r *Raft) Step(m pb.Message) error {
 			r.RaftLog.appendEntries(ents...)
 			r.Prs[r.id].Match=r.RaftLog.LastIndex()
 			r.Prs[r.id].Next=r.Prs[r.id].Match+1
-
-			for j:=range r.Prs{
-				if j != r.id {
-					r.sendAppend(uint64(j))
+			if len(r.Prs)==1 {
+				r.UpdateCommit()
+			}else{
+				for j:=range r.Prs{
+					if j != r.id {
+						r.sendAppend(uint64(j))
+					}
 				}
 			}
+		case pb.MessageType_MsgAppendResponse:
+			prs:=r.Prs[m.From]
+			//sub1 retry
+			if(m.Reject){
+				if m.Index==prs.Next-1{
+					prs.Next=m.Index
+					if prs.Next==0{
+						prs.Next=1
+					}
+					r.sendAppend(m.From)
+				}
+			}else{
+				if m.Index>prs.Match{
+					prs.Match=m.Index
+					prs.Next=m.Index+1
+					if r.UpdateCommit(){
+						for i:=1;i<=len(r.Prs);i++{
+							if uint64(i)!=r.id{
+								r.sendAppend(uint64(i))
+							}
+						}
+					}
+				}
+			}
+			
 		}
 	}
 	return nil
@@ -582,10 +636,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	entries:=make([]pb.Entry,0,len(m.Entries))
 	ifconf:=false
 	for _, ent := range m.Entries {
-		term, err := r.RaftLog.Term(ent.Index)
-		if err != nil {
-			panic(err)
-		}
+		term, _ := r.RaftLog.Term(ent.Index)
 		if term != ent.Term {
 			ifconf = true
 		}
@@ -601,6 +652,31 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		r.RaftLog.committed = min(newindex, m.Commit)
 	}
 	r.msgs=append(r.msgs,msg)
+}
+
+func (r *Raft)UpdateCommit()bool{
+	match:=make([]uint64,len(r.Prs))
+	for i,prs := range r.Prs{
+		if i==r.id{
+			match[i-1]=r.RaftLog.LastIndex()
+		}else{
+			match[i-1]=prs.Match
+		}
+	}
+
+	sortkeys.Uint64s(match)
+	mid:=match[(len(match)-1)/2]
+	if(mid>r.RaftLog.LastIndex()||mid<=r.RaftLog.committed){
+		return false
+	}
+	midtrem,_:=r.RaftLog.Term(mid)
+
+	if(midtrem!=r.Term){
+		return false
+	}
+
+	r.RaftLog.committed=mid
+	return true
 }
 
 // handleHeartbeat handle Heartbeat RPC request

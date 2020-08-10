@@ -81,23 +81,32 @@ func (l *RaftLog) maybeCompact() {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	if l.stabled+1>l.LastIndex(){
+		return make([]pb.Entry,0)
+	}
+	ents:=l.GetLastEntries(l.stabled+1,l.LastIndex()+1)
+	return ents
 }
 
 // nextEnts returns all the committed but not applied entries
-func (l *RaftLog) nextEnts() (ents []pb.Entry) {
+func (l *RaftLog) nextEnts() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+
+	if l.applied+1>l.LastIndex(){
+		return make([]pb.Entry,0)
+	}
+	ents:=l.GetLastEntries(l.applied+1,l.committed+1)
+	return ents
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	/*entrieslth:=len(l.entries)
+	entrieslth:=len(l.entries)
 	if entrieslth>0 {
 		return l.preindex+uint64(entrieslth)-1
 	}
-*/
+
 	lastindex,_:=l.storage.LastIndex()
 	return lastindex
 }
@@ -121,36 +130,29 @@ func (l *RaftLog) LastTerm() uint64{
 
 
 func (l *RaftLog) GetLastEntries(from uint64,to uint64) []pb.Entry{
-	lastindex:=l.LastIndex()
 
-	if(from==lastindex){
+	if(from==to){
 		return nil
 	}
 	var sents []pb.Entry
+	var storageentries []pb.Entry
+	var memoryentries []pb.Entry
 	if len(l.entries)>0{
 		if from<l.preindex{
-			storageentries,_:=l.storage.Entries(from,min(to,l.preindex))
+			storageentries,_=l.storage.Entries(from,max(to,l.preindex))
 			sents=storageentries
 		}
 
 		if to>l.preindex{
-			memoryentries:=l.entries[max(from,l.preindex)-l.preindex : to-l.preindex]
-			if len(sents)>0{
-				res:=make([]pb.Entry,len(sents)+len(memoryentries))
-				n:=copy(res,sents)
-				copy(res[n:],memoryentries)
-				return res
-			}else{
-				res := make([]pb.Entry, len(memoryentries))
-				copy(res, memoryentries)
-				return res
-			}
+			memoryentries=l.entries[max(from,l.preindex)-l.preindex : to-l.preindex]
 		}
+		sents = append(sents, storageentries...)
+		sents = append(sents, memoryentries...)
+		return sents
 	}else{
 		storageentries,_:=l.storage.Entries(from,to)
 		return storageentries
 	}
-	return nil
 }
 
 func (l *RaftLog) appendEntries(entries ...pb.Entry){
