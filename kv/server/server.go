@@ -63,10 +63,6 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	// Your Code Here (1).
 
-	//Attention: in my some code
-	//the word "yi" equals to "and"
-	//btw "yi" in Russian means "and"
-	//I think it's funny and unique
 
 	//put key and value
 	value_yi_key:=storage.Put{
@@ -90,7 +86,7 @@ func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kv
 func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	// Your Code Here (1).
 
-	//"yi" refer to RawPut
+	// refer to RawPut
 	//delet is similar to put, because both of them are write operaation, I think
 
 	//delete key

@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -78,11 +77,13 @@ type RawNode struct {
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
 	raft:=newRaft(config)
+	rd:=new(Ready)
 
-
+	rd.SoftState=&SoftState{}
+	rd.HardState=pb.HardState{}
 	return &RawNode{
 		Raft: raft,
-		Rd: &Ready{},
+		Rd: rd,
 	},nil
 }
 
@@ -151,11 +152,45 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
-	rn.Rd.Entries=rn.Raft.RaftLog.unstableEntries()
-	rn.Rd.CommittedEntries=rn.Raft.RaftLog.nextEnts()
+
+	rd := Ready{
+		Entries:          rn.Raft.RaftLog.unstableEntries(),
+		CommittedEntries: rn.Raft.RaftLog.nextEnts(),
+	}
+	if len(rn.Raft.msgs)>=1{
+		rd.Messages=rn.Raft.msgs
+	}else{
+		rd.Messages=nil
+	}
+
+
+	raft:=rn.Raft
+
+	if !(raft.Lead==rn.Rd.SoftState.Lead && raft.State==rn.Rd.SoftState.RaftState){
+		rn.Rd.SoftState.Lead=raft.Lead
+		rn.Rd.SoftState.RaftState=raft.State
+		rd.SoftState=&SoftState{}
+		rd.SoftState.Lead=raft.Lead
+		rd.SoftState.RaftState=raft.State
+
+	}
+
+	if !(raft.Term-1==rn.Rd.HardState.Term && raft.Vote==rn.Rd.HardState.Vote && raft.RaftLog.committed-1==rn.Rd.Commit){
+		rd.HardState=pb.HardState{}
+		rd.HardState.Term=raft.Term-1
+		rd.HardState.Vote=raft.Vote
+		rd.HardState.Commit=raft.RaftLog.committed-1
+	}
+	rn.Raft.msgs=make([]pb.Message,0)
+	if !IsEmptySnap(raft.RaftLog.pendingSnapshot) {
+		rd.Snapshot = *raft.RaftLog.pendingSnapshot
+		raft.RaftLog.pendingSnapshot = nil
+	}
+
+
 	//rn.Rd.Messages=rn.Raft.msgs
 
-	return *rn.Rd
+	return rd
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
@@ -172,12 +207,19 @@ func (rn *RawNode) HasReady() bool {
 // last Ready results.
 func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
+	if !IsEmptyHardState(rd.HardState) {
+		rn.Rd.HardState = rd.HardState
+	}
 	if len(rd.Entries)>0{
 		rn.Raft.RaftLog.stabled = rd.Entries[len(rd.Entries)-1].Index
 	}
 	if len(rd.CommittedEntries) > 0 {
 		rn.Raft.RaftLog.applied = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
 	}
+	rn.Rd.CommittedEntries = nil
+	rn.Rd.Messages = nil
+	rn.Rd.Entries = nil
+
 }
 
 // GetProgress return the the Progress of this node and its peers, if this

@@ -18,16 +18,16 @@ type StandAloneStorage struct {
 //new Stand Alone Storage database, but It's hard to understand
 func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
 	// Your Code Here (1).
-	//vnimaniye: decide the path of db on our disk, kv yi raft(useless) path
+	//mention: decide the path of db on our disk, kv and raft(useless) path
 	dbpath:=conf.DBPath
 	kvpath:=filepath.Join(dbpath,"kv")
 	raftpath:=filepath.Join(dbpath,"raft")
 
-	//vnimaniye: createDB(subpath, config) in engines.go and that's initial our db
+	//mention: createDB(subpath, config) in engines.go and that's initial our db
 	kvDB:=engine_util.CreateDB("kv",conf)
 	raftDB:=engine_util.CreateDB("raft",conf)
 
-	//vnimaniye: lab1 seems not to use raft path, refer to Shan's code and questioned
+	//mention: lab1 seems not to use raft path, refer to Shan's code and questioned
 	return &StandAloneStorage{
 		engine: engine_util.NewEngines(kvDB,raftDB,kvpath,raftpath),
 	}
@@ -56,7 +56,7 @@ func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader,
 
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
 	// Your Code Here (1).
-	//write include delete yi put that modify db
+	//write include delete and put that modify db
 	//for batch
 	for _,m :=range batch{
 		switch m.Data.(type) {

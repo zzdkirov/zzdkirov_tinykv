@@ -187,23 +187,29 @@ func newRaft(c *Config) *Raft {
 
 	lasti:=raft.RaftLog.LastIndex()
 
-	initialstate,_,_:=raft.RaftLog.storage.InitialState()
+	initialstate,confstat,_:=raft.RaftLog.storage.InitialState()
+	if(c.peers==nil){
+		c.peers=confstat.Nodes
+	}
 
 	/*forget to initial vote so test LeaderElectionOverwriteNewerlogs failed*/
 	raft.Vote=initialstate.Vote
 	raft.Term=initialstate.Term
 	raft.RaftLog.committed=initialstate.Commit
+	if c.Applied > 0 {
+		raft.RaftLog.applied = c.Applied
+	}
 
 	//match always initialize with its last matchlogindex(if not avaliable zero)
 	//initialize every node's log progress and for others zero
-	for i:=1;i<=len(c.peers);i++{
-		if raft.id==uint64(i) {
-			raft.Prs[uint64(i)]=&Progress{
+	for _,i:=range c.peers{
+		if raft.id==i {
+			raft.Prs[i]=&Progress{
 				Match: lasti,
 				Next: lasti+1,
 			}
 		}else{
-				raft.Prs[uint64(i)]=&Progress{
+				raft.Prs[i]=&Progress{
 					Match: 0,
 					Next:  lasti + 1,
 				}

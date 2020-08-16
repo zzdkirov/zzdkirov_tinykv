@@ -27,6 +27,7 @@ package raft
 
 import (
 	"fmt"
+	//"github.com/pingcap-incubator/tinykv/log"
 	"reflect"
 	"sort"
 	"testing"

@@ -2,6 +2,10 @@ package raftstore
 
 import (
 	"fmt"
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
+	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
+	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"sort"
 	"time"
 
 	"github.com/Connor1996/badger/y"
@@ -38,11 +42,111 @@ func newPeerMsgHandler(peer *peer, ctx *GlobalContext) *peerMsgHandler {
 	}
 }
 
+func (d *peerMsgHandler) ProcessRequest(entry *eraftpb.Entry){
+	wb := new(engine_util.WriteBatch)
+	req := &raft_cmdpb.Request{}
+	req.Unmarshal(entry.Data)
+
+	switch req.CmdType {
+	case raft_cmdpb.CmdType_Get:
+		d.peerStorage.applyState.AppliedIndex = entry.Index
+		wb.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+		wb.WriteToDB(d.peerStorage.Engines.Kv)
+	case raft_cmdpb.CmdType_Put:
+		putreq := req.GetPut()
+		wb.SetCF(putreq.GetCf(), putreq.GetKey(), putreq.GetValue())
+		wb.WriteToDB(d.peerStorage.Engines.Kv)
+	case raft_cmdpb.CmdType_Delete:
+		delreq := req.GetDelete()
+		wb.DeleteCF(delreq.GetCf(), delreq.GetKey())
+		wb.WriteToDB(d.peerStorage.Engines.Kv)
+	case raft_cmdpb.CmdType_Snap:
+		d.peerStorage.applyState.AppliedIndex = entry.Index
+		wb.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+		wb.WriteToDB(d.peerStorage.Engines.Kv)
+		}
+
+	// make response
+	if len(d.proposals) > 0 {
+		p := d.proposals[0]
+		if p.index == entry.Index {
+			if p.term != entry.Term {
+				p.cb.Done(ErrRespStaleCommand(entry.Term))
+			} else {
+
+				resp := &raft_cmdpb.RaftCmdResponse{
+					Header: &raft_cmdpb.RaftResponseHeader{},
+				}
+
+				switch req.CmdType {
+				case raft_cmdpb.CmdType_Get:
+					getReq := req.GetGet()
+					value, _ := engine_util.GetCF(d.peerStorage.Engines.Kv, getReq.GetCf(), getReq.GetKey())
+					resp.Responses = []*raft_cmdpb.Response{
+						{
+							CmdType: raft_cmdpb.CmdType_Get,
+							Get: &raft_cmdpb.GetResponse{
+								Value: value,
+							},
+						},
+					}
+				case raft_cmdpb.CmdType_Put:
+					resp.Responses = []*raft_cmdpb.Response{
+						{
+							CmdType: raft_cmdpb.CmdType_Put,
+							Put: &raft_cmdpb.PutResponse{},
+						},
+					}
+				case raft_cmdpb.CmdType_Delete:
+					resp.Responses = []*raft_cmdpb.Response{
+						{
+							CmdType: raft_cmdpb.CmdType_Delete,
+							Delete: &raft_cmdpb.DeleteResponse{},
+						},
+					}
+				case raft_cmdpb.CmdType_Snap:
+					resp.Responses = []*raft_cmdpb.Response{
+						{
+							CmdType: raft_cmdpb.CmdType_Snap,
+							Snap: &raft_cmdpb.SnapResponse{
+								Region: d.Region(),
+							},
+						},
+					}
+					p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
+
+				}
+				p.cb.Done(resp)
+			}
+			d.proposals = d.proposals[1:]
+		}
+	}
+}
+
 func (d *peerMsgHandler) HandleRaftReady() {
 	if d.stopped {
 		return
 	}
 	// Your Code Here (2B).
+
+	if d.RaftGroup.HasReady(){
+		rd:=d.RaftGroup.Ready()
+		d.peerStorage.SaveReadyState(&rd)
+		d.Send(d.ctx.trans,rd.Messages)
+
+		kvWB := new(engine_util.WriteBatch)
+		if len(rd.CommittedEntries)>0{	//it's a low error
+			for _, entry := range rd.CommittedEntries {
+				d.ProcessRequest(&entry)
+				kvWB=new(engine_util.WriteBatch)
+			}
+			d.peerStorage.applyState.AppliedIndex = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
+			kvWB.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+			kvWB.WriteToDB(d.peerStorage.Engines.Kv)
+		}
+
+		d.RaftGroup.Advance(rd)
+	}
 }
 
 func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
@@ -114,6 +218,30 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		return
 	}
 	// Your Code Here (2B).
+
+	data, _ := msg.Requests[0].Marshal()
+
+	d.RaftGroup.Propose(data)
+	raft := d.RaftGroup.Raft
+	lastindex := raft.RaftLog.LastIndex()
+	p := &proposal{
+		index: lastindex,
+		term: raft.Term,
+		cb: cb,
+	}
+
+	lth:=len(d.proposals)
+	if lth>0{
+		idx := sort.Search(lth, func(i int) bool { return d.proposals[i].index >= lastindex })
+		if idx < lth {
+			for i := idx; i < lth; i++ {
+				pi := d.proposals[i]
+				pi.cb.Done(ErrRespStaleCommand(raft.Term))
+			}
+			d.proposals = d.proposals[:idx]
+		}
+	}
+	d.proposals = append(d.proposals, p)
 }
 
 func (d *peerMsgHandler) onTick() {
