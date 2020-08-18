@@ -153,7 +153,7 @@ func (bs *Raftstore) loadPeers() ([]*peer, error) {
 				continue
 			}
 
-			peer, err := createPeer(storeID, ctx.cfg, ctx.regionTaskSender, ctx.engine, region)
+ 			peer, err := createPeer(storeID, ctx.cfg, ctx.regionTaskSender, ctx.engine, region)
 			if err != nil {
 				return err
 			}

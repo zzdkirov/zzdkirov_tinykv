@@ -231,14 +231,15 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 	}
 
 	lth:=len(d.proposals)
+
 	if lth>0{
-		idx := sort.Search(lth, func(i int) bool { return d.proposals[i].index >= lastindex })
-		if idx < lth {
-			for i := idx; i < lth; i++ {
+		index := sort.Search(lth, func(i int) bool { return d.proposals[i].index >= lastindex })
+		if index < lth {
+			for i := index; i < lth; i++ {
 				pi := d.proposals[i]
 				pi.cb.Done(ErrRespStaleCommand(raft.Term))
 			}
-			d.proposals = d.proposals[:idx]
+			d.proposals = d.proposals[:index]
 		}
 	}
 	d.proposals = append(d.proposals, p)

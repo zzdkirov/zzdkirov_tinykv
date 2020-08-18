@@ -14,7 +14,9 @@
 
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+)
 
 // RaftLog manage the log entries, its struct look like:
 //
@@ -68,6 +70,7 @@ func newLog(storage Storage) *RaftLog {
 		entries: ent,
 		preindex: prei,
 		stabled: stab,
+		applied: prei-1,
 	}
 }
 
@@ -131,6 +134,7 @@ func (l *RaftLog) LastTerm() uint64{
 
 func (l *RaftLog) GetLastEntries(from uint64,to uint64) []pb.Entry{
 
+	//log.Infof("%d,%d",from,to)
 	if(from==to){
 		return nil
 	}
@@ -161,7 +165,7 @@ func (l *RaftLog) appendEntries(entries ...pb.Entry){
 	}
 	lastindex:=entries[0].Index-1
 	if len(l.entries)>0 {
-		if lastindex==l.preindex+uint64(len(l.entries)-1){
+		if lastindex==l.LastIndex(){
 			//if append entries equals last logindex add now entries lth means normal situation and append
 			l.entries=append(l.entries,entries...)
 		}else if lastindex< l.preindex{

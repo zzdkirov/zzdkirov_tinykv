@@ -174,18 +174,20 @@ func (rn *RawNode) Ready() Ready {
 		rd.SoftState.RaftState=raft.State
 
 	}
-
-	if !(raft.Term-1==rn.Rd.HardState.Term && raft.Vote==rn.Rd.HardState.Vote && raft.RaftLog.committed-1==rn.Rd.Commit){
+/*
+	if !(raft.Term==rn.Rd.HardState.Term && raft.Vote==rn.Rd.HardState.Vote && raft.RaftLog.committed==rn.Rd.Commit){
 		rd.HardState=pb.HardState{}
-		rd.HardState.Term=raft.Term-1
+		rd.HardState.Term=raft.Term
 		rd.HardState.Vote=raft.Vote
-		rd.HardState.Commit=raft.RaftLog.committed-1
+		rd.HardState.Commit=raft.RaftLog.committed
 	}
+
+ */
 	rn.Raft.msgs=make([]pb.Message,0)
-	if !IsEmptySnap(raft.RaftLog.pendingSnapshot) {
+	/*if !IsEmptySnap(raft.RaftLog.pendingSnapshot) {
 		rd.Snapshot = *raft.RaftLog.pendingSnapshot
 		raft.RaftLog.pendingSnapshot = nil
-	}
+	}*/
 
 
 	//rn.Rd.Messages=rn.Raft.msgs
