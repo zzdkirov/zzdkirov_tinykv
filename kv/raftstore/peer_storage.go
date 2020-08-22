@@ -366,7 +366,7 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	// Your Code Here (2B/2C).
 
 	raftwb:=new(engine_util.WriteBatch)
-	//kvwb:=new(engine_util.WriteBatch)
+	kvwb:=new(engine_util.WriteBatch)
 	ps.Append(ready.Entries,raftwb)
 
 	//save hard state
@@ -379,9 +379,9 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	raftwb.SetMeta(meta.RaftStateKey(rid),ps.raftState)
 	ps.Engines.WriteRaft(raftwb)
 
-	//kvwb.SetMeta(meta.ApplyStateKey(rid),ps.applyState)
+	kvwb.SetMeta(meta.ApplyStateKey(rid),ps.applyState)
 	//kvwb.SetMeta(meta.RegionStateKey(rid),ps.region)
-	//ps.Engines.WriteKV(kvwb)
+	ps.Engines.WriteKV(kvwb)
 	return nil, nil
 }
 

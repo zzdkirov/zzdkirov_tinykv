@@ -86,7 +86,7 @@ func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kv
 func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	// Your Code Here (1).
 
-	// refer to RawPut
+	//  refer to RawPut
 	//delet is similar to put, because both of them are write operaation, I think
 
 	//delete key

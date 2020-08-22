@@ -138,7 +138,6 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		if len(rd.CommittedEntries)>0{	//it's a low error
 			for _, entry := range rd.CommittedEntries {
 				d.ProcessRequest(&entry)
-				kvWB=new(engine_util.WriteBatch)
 			}
 			d.peerStorage.applyState.AppliedIndex = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
 			kvWB.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
@@ -218,10 +217,11 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		return
 	}
 	// Your Code Here (2B).
+	for i:=0;i<len(msg.Requests);i++{
+		data, _ := msg.Requests[0].Marshal()
+		d.RaftGroup.Propose(data)
+	}
 
-	data, _ := msg.Requests[0].Marshal()
-
-	d.RaftGroup.Propose(data)
 	raft := d.RaftGroup.Raft
 	lastindex := raft.RaftLog.LastIndex()
 	p := &proposal{
