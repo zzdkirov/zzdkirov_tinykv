@@ -63,6 +63,7 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	// Your Code Here (1).
 
+	//"yi" in Russian means "and", that's a fault spell
 
 	//put key and value
 	value_yi_key:=storage.Put{

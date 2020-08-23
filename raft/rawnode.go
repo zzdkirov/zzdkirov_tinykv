@@ -163,7 +163,6 @@ func (rn *RawNode) Ready() Ready {
 		rd.Messages=nil
 	}
 
-
 	raft:=rn.Raft
 
 	if !(raft.Lead==rn.Rd.SoftState.Lead && raft.State==rn.Rd.SoftState.RaftState){
@@ -174,23 +173,8 @@ func (rn *RawNode) Ready() Ready {
 		rd.SoftState.RaftState=raft.State
 
 	}
-/*
-	if !(raft.Term==rn.Rd.HardState.Term && raft.Vote==rn.Rd.HardState.Vote && raft.RaftLog.committed==rn.Rd.Commit){
-		rd.HardState=pb.HardState{}
-		rd.HardState.Term=raft.Term
-		rd.HardState.Vote=raft.Vote
-		rd.HardState.Commit=raft.RaftLog.committed
-	}
 
- */
 	rn.Raft.msgs=make([]pb.Message,0)
-	/*if !IsEmptySnap(raft.RaftLog.pendingSnapshot) {
-		rd.Snapshot = *raft.RaftLog.pendingSnapshot
-		raft.RaftLog.pendingSnapshot = nil
-	}*/
-
-
-	//rn.Rd.Messages=rn.Raft.msgs
 
 	return rd
 }
@@ -218,9 +202,6 @@ func (rn *RawNode) Advance(rd Ready) {
 	if len(rd.CommittedEntries) > 0 {
 		rn.Raft.RaftLog.applied = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
 	}
-	rn.Rd.CommittedEntries = nil
-	rn.Rd.Messages = nil
-	rn.Rd.Entries = nil
 
 }
 

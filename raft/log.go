@@ -107,7 +107,7 @@ func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
 	entrieslth:=len(l.entries)
 	if entrieslth>0 {
-		return l.preindex+uint64(entrieslth)-1
+		return l.entries[len(l.entries)-1].Index
 	}
 
 	lastindex,_:=l.storage.LastIndex()
@@ -169,7 +169,7 @@ func (l *RaftLog) appendEntries(entries ...pb.Entry){
 			//if append entries equals last logindex add now entries lth means normal situation and append
 			l.entries=append(l.entries,entries...)
 		}else if lastindex< l.preindex{
-			//get new entries
+			//del conflict entries
 			l.preindex=lastindex+1
 			l.entries=entries
 		}else{
@@ -182,6 +182,7 @@ func (l *RaftLog) appendEntries(entries ...pb.Entry){
 		l.preindex=lastindex+1
 		l.entries=entries
 	}
+	//update stabled
 	if l.stabled>lastindex{
 		l.stabled=lastindex
 	}

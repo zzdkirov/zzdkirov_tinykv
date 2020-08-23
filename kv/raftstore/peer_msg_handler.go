@@ -68,60 +68,55 @@ func (d *peerMsgHandler) ProcessRequest(entry *eraftpb.Entry){
 
 	// make response
 	if len(d.proposals) > 0 {
-		p := d.proposals[0]
-		if p.index == entry.Index {
-			if p.term != entry.Term {
-				p.cb.Done(ErrRespStaleCommand(entry.Term))
-			} else {
-
-				resp := &raft_cmdpb.RaftCmdResponse{
-					Header: &raft_cmdpb.RaftResponseHeader{},
-				}
-
-				switch req.CmdType {
-				case raft_cmdpb.CmdType_Get:
-					getReq := req.GetGet()
-					value, _ := engine_util.GetCF(d.peerStorage.Engines.Kv, getReq.GetCf(), getReq.GetKey())
-					resp.Responses = []*raft_cmdpb.Response{
-						{
-							CmdType: raft_cmdpb.CmdType_Get,
-							Get: &raft_cmdpb.GetResponse{
-								Value: value,
-							},
-						},
-					}
-				case raft_cmdpb.CmdType_Put:
-					resp.Responses = []*raft_cmdpb.Response{
-						{
-							CmdType: raft_cmdpb.CmdType_Put,
-							Put: &raft_cmdpb.PutResponse{},
-						},
-					}
-				case raft_cmdpb.CmdType_Delete:
-					resp.Responses = []*raft_cmdpb.Response{
-						{
-							CmdType: raft_cmdpb.CmdType_Delete,
-							Delete: &raft_cmdpb.DeleteResponse{},
-						},
-					}
-				case raft_cmdpb.CmdType_Snap:
-					resp.Responses = []*raft_cmdpb.Response{
-						{
-							CmdType: raft_cmdpb.CmdType_Snap,
-							Snap: &raft_cmdpb.SnapResponse{
-								Region: d.Region(),
-							},
-						},
-					}
-					p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
-
-				}
-				p.cb.Done(resp)
+		proposal := d.proposals[0]
+		if proposal.index == entry.Index && proposal.term == entry.Term {
+			resp := &raft_cmdpb.RaftCmdResponse{
+				Header: &raft_cmdpb.RaftResponseHeader{},
 			}
-			d.proposals = d.proposals[1:]
+			switch req.CmdType {
+			case raft_cmdpb.CmdType_Get:
+				getReq := req.GetGet()
+				value, _ := engine_util.GetCF(d.peerStorage.Engines.Kv, getReq.GetCf(), getReq.GetKey())
+				resp.Responses = []*raft_cmdpb.Response{
+					{
+						CmdType: raft_cmdpb.CmdType_Get,
+						Get: &raft_cmdpb.GetResponse{
+							Value: value,
+						},
+					},
+				}
+			case raft_cmdpb.CmdType_Put:
+				resp.Responses = []*raft_cmdpb.Response{
+					{
+						CmdType: raft_cmdpb.CmdType_Put,
+						Put: &raft_cmdpb.PutResponse{},
+					},
+				}
+			case raft_cmdpb.CmdType_Delete:
+				resp.Responses = []*raft_cmdpb.Response{
+					{
+						CmdType: raft_cmdpb.CmdType_Delete,
+						Delete: &raft_cmdpb.DeleteResponse{},
+					},
+				}
+			case raft_cmdpb.CmdType_Snap:
+				resp.Responses = []*raft_cmdpb.Response{
+					{
+						CmdType: raft_cmdpb.CmdType_Snap,
+						Snap: &raft_cmdpb.SnapResponse{
+							Region: d.Region(),
+						},
+					},
+				}
+				proposal.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
+
+			}
+			proposal.cb.Done(resp)
 		}
+		d.proposals = d.proposals[1:]
 	}
 }
+
 
 func (d *peerMsgHandler) HandleRaftReady() {
 	if d.stopped {
@@ -224,7 +219,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 
 	raft := d.RaftGroup.Raft
 	lastindex := raft.RaftLog.LastIndex()
-	p := &proposal{
+	proposal := &proposal{
 		index: lastindex,
 		term: raft.Term,
 		cb: cb,
@@ -232,6 +227,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 
 	lth:=len(d.proposals)
 
+	//ref
 	if lth>0{
 		index := sort.Search(lth, func(i int) bool { return d.proposals[i].index >= lastindex })
 		if index < lth {
@@ -242,7 +238,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 			d.proposals = d.proposals[:index]
 		}
 	}
-	d.proposals = append(d.proposals, p)
+	d.proposals = append(d.proposals, proposal)
 }
 
 func (d *peerMsgHandler) onTick() {

@@ -170,7 +170,6 @@ func newRaft(c *Config) *Raft {
 
 	//> - When start a new raft, get the last stabled state from `Storage` to initialize `raft.Raft` and `raft.RaftLog`
 
-
 	raft := &Raft{}
 
 	raft.Prs= make(map[uint64]*Progress)
@@ -404,8 +403,6 @@ func (r *Raft) becomeLeader() {
 			}
 		}
 
-
-
 		//propose a nop entry
 		entry:=pb.Entry{
 			Index: lastindex+1,
@@ -418,7 +415,7 @@ func (r *Raft) becomeLeader() {
 		r.Prs[r.id].Match=r.RaftLog.LastIndex()
 		r.Prs[r.id].Next= r.Prs[r.id].Match+1
 		if(len(r.Prs)==1){
-			r.UpdateCommit()
+			r.ifUpdateCommit()
 		} else{
 			//Boardcast msgs to other Followers
 			for j:=1;j<=len(r.Prs);j++{
@@ -573,7 +570,7 @@ func (r *Raft) Step(m pb.Message) error {
 			r.Prs[r.id].Match=r.RaftLog.LastIndex()
 			r.Prs[r.id].Next=r.Prs[r.id].Match+1
 			if len(r.Prs)==1 {
-				r.UpdateCommit()
+				r.ifUpdateCommit()
 			}else{
 				for j:=range r.Prs{
 					if j != r.id {
@@ -583,7 +580,7 @@ func (r *Raft) Step(m pb.Message) error {
 			}
 		case pb.MessageType_MsgAppendResponse:
 			prs:=r.Prs[m.From]
-			//sub1 retry
+			//sub 1 retry
 			if(m.Reject){
 				if m.Index==prs.Next-1{
 					prs.Next=m.Index
@@ -596,7 +593,8 @@ func (r *Raft) Step(m pb.Message) error {
 				if m.Index>prs.Match{
 					prs.Match=m.Index
 					prs.Next=m.Index+1
-					if r.UpdateCommit(){
+					//update commit send append
+					if r.ifUpdateCommit(){
 						for i:=1;i<=len(r.Prs);i++{
 							if uint64(i)!=r.id{
 								r.sendAppend(uint64(i))
@@ -622,7 +620,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 
 	newindex:=m.Index+uint64(len(m.Entries))
 	lastindex:=m.Index
-	lastterm:=m.LogTerm
+	term:=m.LogTerm
 
 	msg:=pb.Message{
 		MsgType: pb.MessageType_MsgAppendResponse,
@@ -633,8 +631,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		Reject: false,
 
 	}
-	tempterm,_:=r.RaftLog.Term(lastindex)
-	if lastterm!=tempterm{
+	lastlogterm,_:=r.RaftLog.Term(lastindex)
+	if term!=lastlogterm{
 		msg.Reject=true
 		r.msgs=append(r.msgs,msg)
 		return
@@ -660,7 +658,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	r.msgs=append(r.msgs,msg)
 }
 
-func (r *Raft)UpdateCommit()bool{
+func (r *Raft)ifUpdateCommit()bool{
 	match:=make([]uint64,len(r.Prs))
 	for i,prs := range r.Prs{
 		if i==r.id{
@@ -669,7 +667,7 @@ func (r *Raft)UpdateCommit()bool{
 			match[i-1]=prs.Match
 		}
 	}
-
+	//more than half commit
 	sortkeys.Uint64s(match)
 	mid:=match[(len(match)-1)/2]
 	if(mid>r.RaftLog.LastIndex()||mid<=r.RaftLog.committed){
